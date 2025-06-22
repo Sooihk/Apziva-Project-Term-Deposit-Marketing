@@ -77,18 +77,17 @@ Predict if the customer will subscribe (yes/no) to a term deposit (variable y)
     │
     ├── __init__.py             <- Makes term_deposit_marketing a Python module
     │
-    ├── config.py               <- Store useful variables and configuration
+    ├── eda_plotting.py               <- Code to produce exploratory plots of the dataset
     │
-    ├── loaddata.py              <- Scripts to download or generate data
+    ├── load_data.py              <- Scripts to download or generate data
     │
-    ├── features.py             <- Code to create features for modeling
+    ├── preprocessing.py             <- Code to transform features from original dataset into a finalized dataset
     │
-    ├── modeling                
-    │   ├── __init__.py 
-    │   ├── predict.py          <- Code to run model inference with trained models          
-    │   └── train.py            <- Code to train models
-    │
-    └── plots.py                <- Code to create visualizations
+    ├── model                
+    │   ├── train_evaluate.py        <- Code to cv train various models
+    │   ├── xgboost_tune.py          <- Code to hyperparameter tune using Optuna and threshold tuning          
+    │   └── demographic.py           <- Code to use finalized model to create SHAP plots to understand customer demographic
+    
 ```
 
 --------
