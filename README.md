@@ -111,7 +111,7 @@ Run the following command to perform 5-fold cross validation on several classifi
 Run the following command to perform Optuna Hyperparameter tuning and threshold tuning on the chosen model to improve model performance:  
 `python -m term_deposit_marketing.model.xgboost_tune`
 
-Run the following command to produce plots to determine segments of customers our client should prioritize and which features to focus on: 
+Run the following command to produce plots to determine segments of customers our client should prioritize and which features to focus on:   
 `python -m term_deposit_marketing.model.demographic`
 --------
 
