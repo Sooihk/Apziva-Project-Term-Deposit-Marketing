@@ -113,5 +113,6 @@ Run the following command to perform Optuna Hyperparameter tuning and threshold 
 
 Run the following command to produce plots to determine segments of customers our client should prioritize and which features to focus on:   
 `python -m term_deposit_marketing.model.demographic`
+
 --------
 
