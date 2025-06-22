@@ -120,8 +120,176 @@ def plot_top_features(results, top_k=17):
 def resample_training_data(X_train, y_train, random_state=369):
     """ 
     Apply SMOTETomek resampling on the training data
+    Applies SMOTE followed by TomekLinks undersampling.
+    Original class distribution:
+    - Class 0: 29683 (92.8%)
+    - Class 1: 2317 (7.2%)
     """
     # Smote to synthesize new minority class samples
+    smote = SMOTE(sampling_strategy='auto', k_neighbors=3, random_state=random_state)
+    smote_tomek = SMOTETomek(smote=smote, tomek=TomekLinks(n_jobs=-1), random_state=random_state)
+    # Apply resampling only on the training data
+    X_resampled, y_resampled = smote_tomek.fit_resample(X_train, y_train)
+    return X_resampled, y_resampled
+
+def cross_validated_model_scores(X_train, y_train):
+    random_seed=369
+    # 5 fold cross validation to perserve class distribution
+    cross_validate = StratifiedKFold(n_splits=5, shuffle=True, random_state=random_seed)
+    cross_validate_results = []
+
+    # Dictionary of models to be used, and boolean value if they require scaling
+    models = {
+        'Logistic Regression': (LogisticRegression(random_state=random_seed, max_iter=1000), True),
+        'Random Forest': (RandomForestClassifier(random_state=random_seed), False),
+        'XGBoost': (XGBClassifier(eval_metric='logloss', use_label_encoder=False, verbosity=0, random_state=random_seed), False),
+        'LightGBM': (LGBMClassifier(verbosity=-1, random_state=random_seed), False),
+        'Naive Bayes': (GaussianNB(), True),
+    }
+
+    # Iterate over each model
+    for name, (model, need_scaling) in models.items():
+        # Build Pipeline that includesd scaler if needed
+        steps = [('scaler', StandardScaler()), ('classifier', model)] if need_scaling else [('classifier', model)]
+        pipeline = Pipeline(steps)
+        # accumlate validation predictions
+        y_true_all = []
+        y_pred_all = []
+        y_proba_all = []
+        # Loop over CV folds, spliting the data into training and validation sets per fold
+        for train_index, val_index in cross_validate.split(X_train, y_train):
+            X_tr, X_val = X_train.iloc[train_index], X_train.iloc[val_index]
+            y_tr, y_val = y_train.iloc[train_index], y_train.iloc[val_index]
+
+            # Apply SMOTETomek only to the training fold
+            X_resampled, y_resampled = resample_training_data(X_tr, y_tr, random_state=random_seed)
+            # fit the model and predict 
+            pipeline.fit(X_resampled, y_resampled)
+            y_pred = pipeline.predict(X_val) # class labels
+            y_proba = pipeline.predict_proba(X_val)[:, 1]  # probability for positive class
+
+            y_true_all.extend(y_val)
+            y_pred_all.extend(y_pred)
+            y_proba_all.extend(y_proba)
+        # Compute metrics (F1, precision, recall) and overall AUC
+        report = classification_report(y_true_all, y_pred_all, output_dict=True)
+        auc_score = roc_auc_score(y_true_all, y_proba_all)
+
+        cross_validate_results.append({
+            'Model': name,
+            'CV F1 (1)': report['1']['f1-score'],
+            'CV Precision (1)': report['1']['precision'],
+            'CV Recall (1)': report['1']['recall'],
+            'CV AUC': auc_score
+        })
+    results_df = pd.DataFrame(cross_validate_results).sort_values(by='CV F1 (1)', ascending=False)
+    print("Cross-Validated Model Performance (Training Set Only)")
+    print(results_df)
+    return results_df
+
+# Imports for modeling, evaluation, and utilities
+import os
+import joblib
+import optuna
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from xgboost import XGBClassifier
+from sklearn.metrics import (
+    classification_report, roc_auc_score, f1_score,
+    roc_curve, confusion_matrix, ConfusionMatrixDisplay
+)
+from sklearn.model_selection import StratifiedKFold
+from imblearn.combine import SMOTETomek
+from imblearn.over_sampling import SMOTE
+from imblearn.under_sampling import TomekLinks
+
+# Define stratified cross-validation strategy to preserve class balance
+cv_strategy = StratifiedKFold(n_splits=5, shuffle=True, random_state=369)
+
+def resample_training_data(X_train, y_train, random_state=369):
+    # Apply SMOTE (oversampling) followed by Tomek Links (undersampling)
+    smote = SMOTE(sampling_strategy='auto', k_neighbors=3, random_state=random_state)
+    smt = SMOTETomek(smote=smote, tomek=TomekLinks(n_jobs=-1), random_state=random_state)
+    return smt.fit_resample(X_train, y_train)
+
+def train_xgboost_with_optuna(X_train, y_train):
+    best_y_true, best_y_pred = [], []  # Track best true and predicted labels across trials
+
+    def objective(trial):
+        nonlocal best_y_true, best_y_pred  # Store best results across all CV folds
+
+        # Define hyperparameter search space for Optuna
+        params = {
+            'n_estimators': trial.suggest_categorical('n_estimators', [100, 200, 400, 800]),
+            'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3, log=True),
+            'max_depth': trial.suggest_int('max_depth', 3, 10),
+            'gamma': trial.suggest_float('gamma', 0, 1.0),
+            'subsample': trial.suggest_float('subsample', 0.5, 1.0),
+            'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
+            'scale_pos_weight': trial.suggest_categorical('scale_pos_weight', [1, 5, 10]),
+            'reg_alpha': trial.suggest_float('reg_alpha', 0.0, 1.0),
+            'reg_lambda': trial.suggest_float('reg_lambda', 1.0, 5.0),
+            'eval_metric': 'logloss',
+            'objective': 'binary:logistic',
+            'random_state': 369,
+            'n_jobs': -1
+        }
+
+        all_y_true, all_y_pred = [], []
+
+        # Perform cross-validation with internal resampling
+        for train_idx, val_idx in cv_strategy.split(X_train, y_train):
+            X_tr, X_val = X_train.iloc[train_idx], X_train.iloc[val_idx]
+            y_tr, y_val = y_train.iloc[train_idx], y_train.iloc[val_idx]
+
+            # Apply SMOTETomek only on training fold
+            X_res, y_res = resample_training_data(X_tr, y_tr, random_state=369)
+
+            model = XGBClassifier(**params)
+            model.fit(X_res, y_res)
+
+            # Predict on untouched validation fold
+            probas = model.predict_proba(X_val)[:, 1]
+            preds = (probas >= 0.5).astype(int)
+
+            all_y_true.extend(y_val)
+            all_y_pred.extend(preds)
+
+        # Update best trial predictions
+        f1 = f1_score(all_y_true, all_y_pred)
+        if f1 > f1_score(best_y_true, best_y_pred):
+            best_y_true, best_y_pred = all_y_true, all_y_pred
+
+        return f1  # Maximize F1 score for class 1
+
+    # Run Optuna optimization
+    study = optuna.create_study(direction='maximize')
+    study.optimize(objective, n_trials=30, show_progress_bar=True)
+
+    # Print best trial results
+    print("\nClassification Report for Best CV Model:")
+    print(classification_report(best_y_true, best_y_pred))
+
+    # Train final model on fully resampled training set using best hyperparameters
+    best_params = {
+        **study.best_params,
+        'eval_metric': 'logloss',
+        'objective': 'binary:logistic',
+        'random_state': 369,
+        'n_jobs': -1
+    }
+    best_model = XGBClassifier(**best_params)
+    X_res_full, y_res_full = resample_training_data(X_train, y_train, random_state=369)
+    best_model.fit(X_res_full, y_res_full)
+
+    # Save model to disk
+    os.makedirs("../models", exist_ok=True)
+    joblib.dump(best_model, "../models/xgboost_model.pkl")
+
+    print("\nBest F1-Score from CV:", study.best_value)
+    print("Best Hyperparameters:", study.best_params)
+    return best_model
 
 
 if __name__ == '__main__':
@@ -158,3 +326,6 @@ if __name__ == '__main__':
     feature_selection_results = feature_selection(X_train, y_train)
     plot_feature_rank_heatmap(feature_selection_results, top_n=17)
     plot_top_features(feature_selection_results, top_k=17)
+    print("Running cross validation evaluation of multiple models methods...")
+    cv_results = cross_validated_model_scores(X_train, y_train)
+    best_model = train_xgboost_with_optuna(X_train, y_train)
