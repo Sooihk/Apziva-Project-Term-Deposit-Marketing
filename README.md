@@ -90,5 +90,28 @@ Predict if the customer will subscribe (yes/no) to a term deposit (variable y)
     
 ```
 
+## Getting Started: 
+Working with Python 3.12.2 for this project. Clone the repository and install the dependencies:  
+
+pip install -r requirements.txt  
+
+## Exploratory Data Analysis and Feature Selection:  
+To see the plots created in the EDA phase, run the following command:  
+
+`python -m term_deposit_marketing.eda_plotting`
+
+Run the following command for the preprocessing phase of transforming the imbalanced dataset in preparation for modeling:  
+
+`python -m term_deposit_marketing.preprocessing`
+
+## Training and Evaluating Classification Models:   
+Run the following command to perform 5-fold cross validation on several classification models on the transformed dataset:  
+`python -m term_deposit_marketing.model.train_evaluate`
+
+Run the following command to perform Optuna Hyperparameter tuning and threshold tuning on the chosen model to improve model performance:  
+`python -m term_deposit_marketing.model.xgboost_tune`
+
+Run the following command to produce plots to determine segments of customers our client should prioritize and which features to focus on: 
+`python -m term_deposit_marketing.model.demographic`
 --------
 
